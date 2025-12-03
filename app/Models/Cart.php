@@ -8,6 +8,7 @@ class Cart extends Model
 {
     protected $fillable = [
         'id_usuario',
+        'activo',
         'tipo_entrega',
         'direccion_entrega',
         'latitud_entrega',
@@ -17,13 +18,19 @@ class Cart extends Model
     ];
 
     protected $casts = [
+        'activo' => 'boolean',
         'tipo_entrega' => 'string',
         'estado_pedido' => 'string'
     ];
 
     public function products()
     {
-        return $this->belongsToMany(Product::class,'product_selects','id_carrito', 'id_producto')->withTimestamps();
+        return $this->belongsToMany(
+            Product::class,
+            'product_selects',
+            'id_carrito',
+            'id_producto'
+        )->withPivot('cantidad', 'precio_unitario')->withTimestamps();
     }
 
     public function paymentTransaction()

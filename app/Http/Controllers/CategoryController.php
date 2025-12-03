@@ -12,7 +12,8 @@ class CategoryController extends Controller
      */
     public function index()
     {
-        //
+        $categories = Category::all();
+        return response()->json($categories, 200);
     }
 
     /**
@@ -28,7 +29,16 @@ class CategoryController extends Controller
      */
     public function store(Request $request)
     {
-        //
+        $data = $request->validate([
+            'nombre_categoria' => 'required|string|max:100|unique:categories,nombre_categoria',
+        ]);
+
+        $category = Category::create($data);
+
+        return response()->json([
+            'mensaje' => 'Categoría creada con éxito',
+            'categoria' => $category
+        ], 201);
     }
 
     /**
@@ -36,15 +46,7 @@ class CategoryController extends Controller
      */
     public function show(Category $category)
     {
-        //
-    }
-
-    /**
-     * Show the form for editing the specified resource.
-     */
-    public function edit(Category $category)
-    {
-        //
+        return response()->json($category, 200);
     }
 
     /**
@@ -52,7 +54,16 @@ class CategoryController extends Controller
      */
     public function update(Request $request, Category $category)
     {
-        //
+        $data = $request->validate([
+            'nombre_categoria' => 'sometimes|string|max:100|unique:categories,nombre_categoria,' . $category->id,
+        ]);
+
+        $category->update($data);
+
+        return response()->json([
+            'mensaje' => 'Categoría actualizada con éxito',
+            'categoria' => $category
+        ], 200);
     }
 
     /**
@@ -60,6 +71,10 @@ class CategoryController extends Controller
      */
     public function destroy(Category $category)
     {
-        //
+        $category->delete();
+
+        return response()->json([
+            'mensaje' => 'Categoría eliminada con éxito'
+        ], 200);
     }
 }

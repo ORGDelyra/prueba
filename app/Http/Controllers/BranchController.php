@@ -12,7 +12,17 @@ class BranchController extends Controller
      */
     public function index()
     {
-        $branches = Branch::with('user')->get();
+        $branches = Branch::with(['user', 'images' => function($query) {
+            $query->where('type', 'logo');
+        }])->get();
+
+        // Agregar logo_comercio a cada sucursal
+        $branches->transform(function($branch) {
+            $logoImage = $branch->images->where('type', 'logo')->first();
+            $branch->logo_comercio = $logoImage ? $logoImage->url : null;
+            return $branch;
+        });
+
         return response()->json($branches);
     }
 
@@ -32,12 +42,13 @@ class BranchController extends Controller
         $data = $request->validate([
             'nombre_sucursal'=> 'required|string|max:50',
             'nit' => 'required|string|unique:branches,nit',
-            'img_nit' => 'required|string',
-            'longitud' => 'required|string',
-            'latitud' => 'required|string',
-            'direccion' => 'required|string',
-            'id_commerce_category' => 'required|exists:categories,id',
+            'img_nit' => 'nullable|string',
+            'longitud' => 'nullable|string',
+            'latitud' => 'nullable|string',
+            'direccion' => 'nullable|string',
+            'id_commerce_category' => 'nullable|exists:categories,id',
             'logo_url' => 'nullable|url',  // Logo del comercio (URL de Cloudinary, opcional)
+            'logo_comercio' => 'nullable|url', // Alias esperado desde frontend
         ]);
 
         // Obtener usuario autenticado
@@ -66,18 +77,24 @@ class BranchController extends Controller
             ],400);
         }
 
-        // Guardar logo de la sucursal si existe
-        if ($request->logo_url) {
+        // Guardar logo de la sucursal si existe (acepta logo_url o logo_comercio)
+        $logoUrl = $request->input('logo_url') ?? $request->input('logo_comercio');
+        if ($logoUrl) {
             $branch->images()->create([
-                'url' => $data['logo_url'],
+                'url' => $logoUrl,
                 'type' => 'logo',
                 'descripcion' => 'Logo del comercio',
             ]);
         }
 
+        // Recargar imágenes y agregar logo_comercio
+        $branch->load('images');
+        $logoImage = $branch->images->where('type', 'logo')->first();
+        $branch->logo_comercio = $logoImage ? $logoImage->url : null;
+
         return response()->json([
             'mensaje' => 'Sucursal creada con exito',
-            'sucursal' => $branch->load('images'),
+            'sucursal' => $branch,
             'id' => $branch->id
         ],201);
     }
@@ -86,7 +103,15 @@ class BranchController extends Controller
      */
     public function show(Branch $branch)
     {
-        return response()->json($branch->load('user'), 200);
+        $branch->load(['user', 'images' => function($query) {
+            $query->where('type', 'logo');
+        }]);
+
+        // Agregar logo_comercio
+        $logoImage = $branch->images->where('type', 'logo')->first();
+        $branch->logo_comercio = $logoImage ? $logoImage->url : null;
+
+        return response()->json($branch, 200);
     }
 
     /**
@@ -107,20 +132,48 @@ class BranchController extends Controller
         // Verificar que el usuario sea el dueño de la sucursal
         if ($branch->id_usuario !== $user->id) {
             return response()->json([
-                'mensaje' => 'No tienes permisos para actualizar esta sucursal'
+                'mensaje' => 'No tienes permisos para actualizar esta sucursal',
+                'debug' => [
+                    'usuario_autenticado' => $user->id,
+                    'dueno_sucursal' => $branch->id_usuario,
+                    'sucursal_id' => $branch->id
+                ]
             ], 403);
         }
 
         $data = $request->validate([
             'nombre_sucursal'=> 'sometimes|string|max:50',
             'nit' => 'sometimes|string|unique:branches,nit,' . $branch->id,
-            'img_nit' => 'sometimes|string',
-            'longitud' => 'sometimes|string',
-            'latitud' => 'sometimes|string',
-            'direccion' => 'sometimes|string'
+            'img_nit' => 'sometimes|nullable|string',
+            'longitud' => 'sometimes|nullable|string',
+            'latitud' => 'sometimes|nullable|string',
+            'direccion' => 'sometimes|nullable|string',
+            'id_commerce_category' => 'sometimes|nullable|exists:categories,id',
+            'logo_comercio' => 'sometimes|nullable|string|max:1000' // URL de Cloudinary
         ]);
 
+        // Actualizar sucursal
         $branch->update($data);
+
+        // Si se proporciona logo_comercio, actualizar/crear la imagen
+        if (isset($data['logo_comercio'])) {
+            // Eliminar logo anterior si existe
+            $branch->images()->where('type', 'logo')->delete();
+            
+            // Crear nuevo logo
+            if ($data['logo_comercio']) {
+                $branch->images()->create([
+                    'url' => $data['logo_comercio'],
+                    'type' => 'logo',
+                    'descripcion' => 'Logo del comercio',
+                ]);
+            }
+        }
+
+        // Recargar imágenes y agregar logo_comercio
+        $branch->load('images');
+        $logoImage = $branch->images->where('type', 'logo')->first();
+        $branch->logo_comercio = $logoImage ? $logoImage->url : null;
 
         return response()->json([
             'mensaje' => 'Sucursal actualizada con éxito',

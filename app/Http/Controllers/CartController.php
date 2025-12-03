@@ -52,11 +52,15 @@ class CartController extends Controller
 
                 // Validar que hay suficiente stock
                 if ($producto->cantidad < $producto_data['cantidad']) {
-                    throw new \Exception("Stock insuficiente para el producto: {$producto->nombre}");
+                    throw new \Exception("Stock insuficiente para el producto: {$producto->nombre}. Solo quedan {$producto->cantidad} unidades disponibles");
                 }
 
                 $subtotal = $producto_data['cantidad'] * $producto_data['precio_unitario'];
                 $total += $subtotal;
+
+                // Descontar del inventario
+                $producto->cantidad -= $producto_data['cantidad'];
+                $producto->save();
 
                 // Usar pivot table
                 $cart->products()->attach($producto_data['id_producto'], [
@@ -72,6 +76,10 @@ class CartController extends Controller
                     'subtotal' => $subtotal
                 ];
             }
+
+            // Marcar carrito como inactivo (pedido confirmado)
+            $cart->activo = false;
+            $cart->save();
 
             DB::commit();
 
@@ -107,8 +115,9 @@ class CartController extends Controller
     {
         $user = Auth::user();
 
-        $pedidos = Cart::with('products', 'domiciliario')
+        $pedidos = Cart::with(['products.images', 'products.category', 'domiciliario'])
             ->where('id_usuario', $user->id)
+            ->where('activo', false) // Solo pedidos confirmados
             ->orderBy('created_at', 'desc')
             ->get();
 
@@ -133,7 +142,9 @@ class CartController extends Controller
                     'nombre' => $p->nombre,
                     'cantidad' => $p->pivot->cantidad,
                     'precio_unitario' => $p->pivot->precio_unitario,
-                    'subtotal' => $p->pivot->cantidad * $p->pivot->precio_unitario
+                    'subtotal' => $p->pivot->cantidad * $p->pivot->precio_unitario,
+                    'images' => $p->images,
+                    'category' => $p->category
                 ]),
                 'created_at' => $pedido->created_at
             ];
@@ -406,7 +417,26 @@ class CartController extends Controller
      */
     public function index()
     {
-        //
+        $user = Auth::user();
+        
+        \Log::info('📋 index() - Buscando carritos del usuario: ' . $user->id);
+        
+        // Obtener solo carritos activos (no pedidos confirmados)
+        // Busca tanto NULL como cadena vacía por si la BD tiene inconsistencias
+        $carts = Cart::where('id_usuario', $user->id)
+            ->where('activo', 1)
+            ->where(function($query) {
+                $query->whereNull('estado_pedido')
+                      ->orWhere('estado_pedido', '');
+            })
+            ->with(['products.images', 'products.category'])
+            ->orderBy('created_at', 'desc')
+            ->get();
+        
+        \Log::info('✅ Carritos encontrados: ' . $carts->count());
+        \Log::info('📦 Carritos IDs: ' . $carts->pluck('id')->toJson());
+        
+        return response()->json($carts);
     }
 
     /**
@@ -455,5 +485,95 @@ class CartController extends Controller
     public function destroy(Cart $cart)
     {
         //
+    }
+
+    /**
+     * Actualizar la cantidad de un producto en el carrito
+     * PUT /api/cart/{cart}/products/{product}
+     */
+    public function updateQuantity(Request $request, $cart, $product)
+    {
+        try {
+            $user = Auth::user();
+            
+            // Validar que el carrito pertenezca al usuario
+            $cart = Cart::where('id', $cart)
+                ->where('id_usuario', $user->id)
+                ->first();
+            
+            if (!$cart) {
+                return response()->json(['mensaje' => 'Carrito no encontrado'], 404);
+            }
+            
+            // Validar cantidad solicitada
+            $request->validate([
+                'cantidad' => 'required|integer|min:1'
+            ]);
+            
+            $nuevaCantidad = $request->input('cantidad');
+            
+            // Verificar que el producto existe y tiene stock suficiente
+            $productModel = Product::find($product);
+            
+            if (!$productModel) {
+                return response()->json(['mensaje' => 'Producto no encontrado'], 404);
+            }
+            
+            if ($nuevaCantidad > $productModel->cantidad) {
+                return response()->json([
+                    'mensaje' => "Solo hay {$productModel->cantidad} unidades disponibles",
+                    'stock_disponible' => $productModel->cantidad
+                ], 400);
+            }
+            
+            // Actualizar cantidad en la tabla pivote
+            $cart->products()->updateExistingPivot($product, [
+                'cantidad' => $nuevaCantidad
+            ]);
+            
+            return response()->json([
+                'mensaje' => 'Cantidad actualizada correctamente',
+                'producto' => $productModel->nombre,
+                'nueva_cantidad' => $nuevaCantidad
+            ], 200);
+            
+        } catch (\Exception $e) {
+            return response()->json([
+                'mensaje' => 'Error al actualizar cantidad',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Eliminar un producto del carrito
+     * DELETE /api/cart/{cart}/products/{product}
+     */
+    public function removeProduct($cart, $product)
+    {
+        try {
+            $user = Auth::user();
+            
+            $cart = Cart::where('id', $cart)
+                ->where('id_usuario', $user->id)
+                ->first();
+            
+            if (!$cart) {
+                return response()->json(['mensaje' => 'Carrito no encontrado'], 404);
+            }
+            
+            // Eliminar el producto del carrito (tabla pivote)
+            $cart->products()->detach($product);
+            
+            return response()->json([
+                'mensaje' => 'Producto eliminado del carrito'
+            ], 200);
+            
+        } catch (\Exception $e) {
+            return response()->json([
+                'mensaje' => 'Error al eliminar producto',
+                'error' => $e->getMessage()
+            ], 500);
+        }
     }
 }

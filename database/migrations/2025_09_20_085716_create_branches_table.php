@@ -18,7 +18,11 @@ return new class extends Migration
                     ->onDelete('cascade');
             $table->string('nombre_sucursal',50);
             $table->string('nit');
-            $table->string('img_nit');
+            $table->string('img_nit')->nullable();
+            $table->foreignId('id_commerce_category')
+                    ->nullable()
+                    ->constrained('categories')
+                    ->onDelete('set null');
             $table->string('latitud')->nullable();
             $table->string('longitud')->nullable();
             $table->string('direccion')->nullable();

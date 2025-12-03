@@ -50,10 +50,52 @@ class UserController extends Controller
 
     /**
      * Update the specified resource in storage.
+     * PUT /api/user/{id}
+     *
+     * Acepta: email, telefono, primer_nombre, primer_apellido, foto_url, etc.
      */
     public function update(Request $request, string $id)
     {
-        //
+        $user = $request->user();
+
+        if (!$user || ($user->id != $id && $user->id_rol !== 1)) {
+            return response()->json([
+                'mensaje' => 'No tienes permisos para actualizar este usuario'
+            ], 403);
+        }
+
+        $userToUpdate = User::find($id);
+        if (!$userToUpdate) {
+            return response()->json([
+                'mensaje' => 'Usuario no encontrado'
+            ], 404);
+        }
+
+        $data = $request->validate([
+            'email' => 'sometimes|email|unique:users,email,' . $id,
+            'telefono' => 'sometimes|string|max:20',
+            'primer_nombre' => 'sometimes|string|max:100',
+            'primer_apellido' => 'sometimes|string|max:100',
+            'foto_url' => 'nullable|url',  // URL de foto de perfil (Cloudinary)
+        ]);
+
+        // Actualizar campos básicos
+        $userToUpdate->update($data);
+
+        // Si incluye foto_url, guardar como imagen de perfil
+        if (!empty($data['foto_url'])) {
+            $userToUpdate->images()->where('type', 'profile')->delete();
+            $userToUpdate->images()->create([
+                'url' => $data['foto_url'],
+                'type' => 'profile',
+                'descripcion' => 'Foto de perfil del usuario',
+            ]);
+        }
+
+        return response()->json([
+            'mensaje' => 'Usuario actualizado con éxito',
+            'user' => $userToUpdate->load('images')
+        ], 200);
     }
 
     /**

@@ -13,6 +13,7 @@ class Branch extends Model
         'nombre_sucursal',
         'nit',
         'img_nit',
+        'id_commerce_category',
 
         'latitud',
         'longitud',

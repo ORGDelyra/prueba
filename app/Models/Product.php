@@ -6,6 +6,17 @@ use Illuminate\Database\Eloquent\Model;
 
 class Product extends Model
 {
+        protected $fillable = [
+            'id_usuario',
+            'id_sucursal',
+            'id_categoria',
+            'nombre',
+            'descripcion',
+            'precio',
+            'cantidad',
+            'image_url',
+        ];
+
     public function user()
     {
         return $this->belongsTo(User::class, 'id_usuario');
@@ -18,7 +29,12 @@ class Product extends Model
 
     public function carts()
     {
-        return $this->belongsToMany(Cart::class,'product_selects','id_carrito','id_producto')->withTimestamps();
+        return $this->belongsToMany(
+            Cart::class,
+            'product_selects',
+            'id_producto',
+            'id_carrito'
+        )->withPivot('cantidad', 'precio_unitario')->withTimestamps();
     }
 
     public function images()

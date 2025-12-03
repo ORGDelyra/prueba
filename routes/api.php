@@ -14,6 +14,7 @@ use App\Http\Controllers\UserController;
 use App\Http\Controllers\VehicleController;
 use App\Http\Controllers\ImageUploadController;
 use App\Http\Controllers\CloudinaryController;
+use App\Http\Controllers\ChatController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -34,10 +35,16 @@ Route::post('/registro', [AuthController::class, 'register']);
 Route::post('/inicio/sesion', [AuthController::class, 'login']);
 
 // Productos públicos (catálogo)
-Route::get('/product', [ProductController::class, 'index']);
+Route::get('/products/public', [ProductController::class, 'publicIndex']);
+
+// Productos de una sucursal específica (público)
+Route::get('/products/branch/{branchId}', [ProductController::class, 'productsByBranch']);
 
 // Categorías públicas
 Route::get('/category', [CategoryController::class, 'index']);
+
+// Ver información de una sucursal (público)
+Route::get('/branch/{id}', [BranchController::class, 'show']);
 
 // ==========================================
 // RUTAS PROTEGIDAS (Requieren autenticación)
@@ -51,7 +58,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     Route::apiResource('rol', RolController::class);
     Route::apiResource('user', UserController::class);
-    Route::apiResource('branch', BranchController::class);
+    Route::apiResource('branch', BranchController::class)->except(['show']);
 
     // Métodos especiales para imágenes de usuario
     Route::post('/user/profile-image', [UserController::class, 'updateProfileImage']);
@@ -64,11 +71,53 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Productos (CRUD para vendedores)
     Route::apiResource('product', ProductController::class)->except(['index']);
+    // Index protegido: solo productos del vendedor autenticado
+    Route::get('/product', [ProductController::class, 'index']);
 
     // Categorías (CRUD completo para admins, excepto index que es público)
     Route::apiResource('category', CategoryController::class)->except(['index']);
 
-    // Carritos
+    // ==========================================
+    // MÉTODOS ESPECIALES - CARRITO Y PEDIDOS (ANTES de apiResource)
+    // ==========================================
+
+    // CLIENTE: Crear un nuevo pedido con tipo de entrega
+    Route::post('/cart/crear-pedido', [CartController::class, 'crearPedido']);
+
+    // CLIENTE: Ver mis pedidos
+    Route::get('/cart/mis-pedidos', [CartController::class, 'misPedidos']);
+
+    // VENDEDOR: Ver pedidos pendientes de la tienda
+    Route::get('/cart/pedidos-tienda', [CartController::class, 'pedidosTienda']);
+
+    // DOMICILIARIO: Ver mis entregas asignadas
+    Route::get('/cart/mis-entregas', [CartController::class, 'misEntregas']);
+
+    // Ver carrito del usuario actual
+    Route::get('/cart/view', [ProductController::class, 'viewCart']);
+
+    // VENDEDOR: Actualizar estado del pedido
+    Route::put('/cart/{cart}/estado', [CartController::class, 'actualizarEstado']);
+
+    // VENDEDOR: Asignar domiciliario a un pedido
+    Route::put('/cart/{cart}/asignar-domiciliario', [CartController::class, 'asignarDomiciliario']);
+
+    // DOMICILIARIO: Marcar pedido como entregado
+    Route::put('/cart/{cart}/marcar-entregado', [CartController::class, 'marcarEntregado']);
+
+    // CLIENTE: Marcar pedido como recogido (recogida en tienda)
+    Route::put('/cart/{cart}/marcar-recogido', [CartController::class, 'marcarRecogido']);
+
+    // Agregar producto al carrito (método antiguo, mantener por compatibilidad)
+    Route::post('/cart/{cart}/products', [CartController::class, 'addProduct']);
+
+    // Eliminar producto del carrito
+    Route::delete('/cart/{cart}/products/{product}', [CartController::class, 'removeProduct']);
+
+    // Actualizar cantidad de producto en el carrito
+    Route::put('/cart/{cart}/products/{product}', [CartController::class, 'updateQuantity']);
+
+    // Carritos (CRUD básico)
     Route::apiResource('cart', CartController::class);
 
     // Transacciones de pago
@@ -96,9 +145,6 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Agregar producto al carrito (método especial de ProductController)
     Route::post('/product/{product}/add-to-cart', [ProductController::class, 'addToCart']);
-
-    // Ver carrito del usuario actual
-    Route::get('/cart/view', [ProductController::class, 'viewCart']);
 
     // Procesar compra (checkout)
     Route::post('/cart/checkout', [ProductController::class, 'checkout']);
@@ -130,48 +176,27 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::put('/shipment/{shipment}/estado', [ShipmentController::class, 'update']);
 
     // ==========================================
-    // MÉTODOS ESPECIALES - CARRITO Y PEDIDOS
-    // ==========================================
-
-    // CLIENTE: Crear un nuevo pedido con tipo de entrega
-    Route::post('/cart/crear-pedido', [CartController::class, 'crearPedido']);
-
-    // CLIENTE: Ver mis pedidos
-    Route::get('/cart/mis-pedidos', [CartController::class, 'misPedidos']);
-
-    // VENDEDOR: Ver pedidos pendientes de la tienda
-    Route::get('/cart/pedidos-tienda', [CartController::class, 'pedidosTienda']);
-
-    // VENDEDOR: Actualizar estado del pedido
-    Route::put('/cart/{cart}/estado', [CartController::class, 'actualizarEstado']);
-
-    // VENDEDOR: Asignar domiciliario a un pedido
-    Route::put('/cart/{cart}/asignar-domiciliario', [CartController::class, 'asignarDomiciliario']);
-
-    // DOMICILIARIO: Ver mis entregas asignadas
-    Route::get('/cart/mis-entregas', [CartController::class, 'misEntregas']);
-
-    // DOMICILIARIO: Marcar pedido como entregado
-    Route::put('/cart/{cart}/marcar-entregado', [CartController::class, 'marcarEntregado']);
-
-    // CLIENTE: Marcar pedido como recogido (recogida en tienda)
-    Route::put('/cart/{cart}/marcar-recogido', [CartController::class, 'marcarRecogido']);
-
-    // Agregar producto al carrito (método antiguo, mantener por compatibilidad)
-    Route::post('/cart/{cart}/products', [CartController::class, 'addProduct']);
-
-    // Eliminar producto del carrito
-    Route::delete('/cart/{cart}/products/{product}', [CartController::class, 'removeProduct']);
-
-    // Actualizar cantidad de producto en el carrito
-    Route::put('/cart/{cart}/products/{product}', [CartController::class, 'updateQuantity']);
-
-    // ==========================================
     // MÉTODOS ESPECIALES - TRANSACCIONES
     // ==========================================
 
     // Crear transacción de pago desde el carrito
     Route::post('/transaction/from-cart', [PaymentTransactionController::class, 'createFromCart']);
+
+    // ==========================================
+    // MÉTODOS ESPECIALES - CHAT
+    // ==========================================
+
+    // CHAT: Obtener mensajes de un pedido
+    Route::get('/chat/{id_pedido}', [ChatController::class, 'getMessages']);
+
+    // CHAT: Enviar un mensaje en el pedido
+    Route::post('/chat/{id_pedido}/enviar', [ChatController::class, 'sendMessage']);
+
+    // CHAT: Obtener todas las conversaciones del usuario
+    Route::get('/conversaciones', [ChatController::class, 'getConversations']);
+
+    // CHAT: Marcar mensaje como leído (futuro)
+    Route::post('/chat/mensaje/{id}/leer', [ChatController::class, 'markAsRead']);
 
 });
 
