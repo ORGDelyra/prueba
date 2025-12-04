@@ -35,17 +35,34 @@ class CartController extends Controller
         try {
             DB::beginTransaction();
 
-            // Crear carrito
+            // ✅ IMPORTANTE: Eliminar el carrito temporal existente (activo=1)
+            $carritoTemporal = Cart::where('id_usuario', $user->id)
+                ->where('activo', 1)
+                ->whereNull('estado_pedido')
+                ->first();
+
+            if ($carritoTemporal) {
+                Log::info('🗑️ Eliminando carrito temporal ID: ' . $carritoTemporal->id);
+                // Eliminar productos del carrito temporal
+                $carritoTemporal->products()->detach();
+                // Eliminar el carrito temporal
+                $carritoTemporal->delete();
+            }
+
+            // ✅ Crear NUEVO carrito como PEDIDO confirmado
             $cart = Cart::create([
                 'id_usuario' => $user->id,
                 'tipo_entrega' => $data['tipo_entrega'],
                 'direccion_entrega' => $data['direccion_entrega'] ?? null,
                 'latitud_entrega' => $data['latitud_entrega'] ?? null,
                 'longitud_entrega' => $data['longitud_entrega'] ?? null,
-                'estado_pedido' => 'pendiente'
+                'activo' => 0,                  // ✅ Pedido confirmado (no es carrito temporal)
+                'estado_pedido' => 'pendiente'  // ✅ Estado inicial del pedido
             ]);
 
-            // Agregar productos al carrito
+            Log::info('✅ Pedido creado ID: ' . $cart->id . ' para usuario: ' . $user->id);
+
+            // Agregar productos al pedido
             $total = 0;
             $productos_data = [];
 
@@ -78,10 +95,6 @@ class CartController extends Controller
                     'subtotal' => $subtotal
                 ];
             }
-
-            // Marcar carrito como inactivo (pedido confirmado)
-            $cart->activo = false;
-            $cart->save();
 
             DB::commit();
 
@@ -577,5 +590,136 @@ class CartController extends Controller
                 'error' => $e->getMessage()
             ], 500);
         }
+    }
+
+    /**
+     * ✅ Obtener pedidos disponibles para que domiciliarios puedan tomar
+     * GET /api/cart/pedidos-disponibles
+     */
+    public function pedidosDisponibles(Request $request)
+    {
+        $user = Auth::user();
+
+        // Verificar que sea domiciliario (rol 4)
+        if ($user->id_rol !== 4) {
+            return response()->json([
+                'mensaje' => 'Solo los domiciliarios pueden ver pedidos disponibles'
+            ], 403);
+        }
+
+        Log::info("📋 pedidosDisponibles() - Domiciliario: {$user->id}");
+
+        // Pedidos con:
+        // - activo = 0 (pedido confirmado)
+        // - tipo_entrega = 'domicilio'
+        // - estado_pedido = 'listo'
+        // - id_domiciliario = NULL (sin asignar)
+        $pedidos = Cart::with(['products', 'user'])
+            ->where('activo', 0)
+            ->where('tipo_entrega', 'domicilio')
+            ->where('estado_pedido', 'listo')
+            ->whereNull('id_domiciliario')
+            ->orderBy('created_at', 'asc')
+            ->get();
+
+        Log::info("✅ Pedidos disponibles encontrados: " . $pedidos->count());
+
+        // Formatear respuesta
+        $pedidos_formateados = $pedidos->map(function ($pedido) {
+            return [
+                'id' => $pedido->id,
+                'estado_pedido' => $pedido->estado_pedido,
+                'tipo_entrega' => $pedido->tipo_entrega,
+                'cliente' => [
+                    'id' => $pedido->user->id,
+                    'nombre_completo' => $pedido->user->primer_nombre . ' ' . $pedido->user->primer_apellido,
+                    'telefono' => $pedido->user->telefono,
+                    'correo' => $pedido->user->correo
+                ],
+                'direccion_entrega' => $pedido->direccion_entrega,
+                'latitud_entrega' => $pedido->latitud_entrega,
+                'longitud_entrega' => $pedido->longitud_entrega,
+                'total' => $pedido->products->sum(fn($p) => $p->pivot->cantidad * $p->pivot->precio_unitario),
+                'cantidad_productos' => $pedido->products->count(),
+                'productos' => $pedido->products->map(fn($p) => [
+                    'id' => $p->id,
+                    'nombre' => $p->nombre,
+                    'cantidad' => $p->pivot->cantidad,
+                    'precio_unitario' => $p->pivot->precio_unitario
+                ]),
+                'created_at' => $pedido->created_at
+            ];
+        });
+
+        return response()->json($pedidos_formateados);
+    }
+
+    /**
+     * ✅ Domiciliario toma un pedido disponible (se asigna a sí mismo)
+     * PUT /api/cart/{id}/tomar-pedido
+     */
+    public function tomarPedido(Request $request, Cart $cart)
+    {
+        $user = Auth::user();
+
+        // Verificar que sea domiciliario (rol 4)
+        if ($user->id_rol !== 4) {
+            return response()->json([
+                'mensaje' => 'Solo los domiciliarios pueden tomar pedidos'
+            ], 403);
+        }
+
+        Log::info("🚚 tomarPedido() - Domiciliario: {$user->id}, Pedido: {$cart->id}");
+
+        // Verificar que el pedido sea de domicilio
+        if ($cart->tipo_entrega !== 'domicilio') {
+            return response()->json([
+                'mensaje' => 'Este pedido no es de domicilio'
+            ], 400);
+        }
+
+        // Verificar que el pedido esté disponible (sin domiciliario asignado)
+        if ($cart->id_domiciliario !== null) {
+            return response()->json([
+                'mensaje' => 'Este pedido ya fue tomado por otro domiciliario'
+            ], 409); // Conflict
+        }
+
+        // Verificar que el pedido esté listo para entregar
+        if ($cart->estado_pedido !== 'listo') {
+            return response()->json([
+                'mensaje' => 'Este pedido aún no está listo para entregar. Estado actual: ' . $cart->estado_pedido
+            ], 400);
+        }
+
+        // ✅ Asignar el domiciliario y cambiar estado a 'en_camino'
+        $cart->update([
+            'id_domiciliario' => $user->id,
+            'estado_pedido' => 'en_camino'
+        ]);
+
+        Log::info("✅ Domiciliario {$user->id} tomó el pedido {$cart->id}");
+
+        // Recargar con relaciones
+        $cart->load(['products', 'user']);
+
+        return response()->json([
+            'mensaje' => 'Pedido tomado exitosamente',
+            'pedido' => [
+                'id' => $cart->id,
+                'id_domiciliario' => $cart->id_domiciliario,
+                'estado_pedido' => $cart->estado_pedido,
+                'tipo_entrega' => $cart->tipo_entrega,
+                'cliente' => [
+                    'nombre_completo' => $cart->user->primer_nombre . ' ' . $cart->user->primer_apellido,
+                    'telefono' => $cart->user->telefono
+                ],
+                'direccion_entrega' => $cart->direccion_entrega,
+                'latitud_entrega' => $cart->latitud_entrega,
+                'longitud_entrega' => $cart->longitud_entrega,
+                'total' => $cart->products->sum(fn($p) => $p->pivot->cantidad * $p->pivot->precio_unitario),
+                'productos' => $cart->products
+            ]
+        ], 200);
     }
 }

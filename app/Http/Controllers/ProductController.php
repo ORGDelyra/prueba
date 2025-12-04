@@ -150,12 +150,12 @@ class ProductController extends Controller
     public function destroy(Product $product)
     {
         $user = Auth::user();
-        
+
         // Validar que el usuario es vendedor y dueño del producto
         if ($user->id_rol != 3 || $product->id_usuario != $user->id) {
             return response()->json(['mensaje' => 'No autorizado'], 403);
         }
-        
+
         // Eliminar las imágenes asociadas
         if ($product->images()->count() > 0) {
             foreach ($product->images as $image) {
@@ -164,10 +164,10 @@ class ProductController extends Controller
                 $image->delete();
             }
         }
-        
+
         // Eliminar el producto
         $product->delete();
-        
+
         return response()->json([
             'mensaje' => 'Producto eliminado exitosamente'
         ], 200);
@@ -195,39 +195,27 @@ class ProductController extends Controller
             ], 400);
         }
 
-        // Log inicial
-        Log::info('🛒 addToCart - Usuario: ' . $user->id . ', Producto: ' . $product->id);
-        
-        // Buscar carrito activo SIN estado_pedido (no reutilizar pedidos confirmados)
-        // Busca tanto NULL como cadena vacía por si la BD tiene inconsistencias
-        $cart = Cart::where('id_usuario', $user->id)
-            ->where('activo', 1)
-            ->where(function($query) {
-                $query->whereNull('estado_pedido')
-                      ->orWhere('estado_pedido', '');
-            })
-            ->first();
-
-        Log::info('🔍 Carrito encontrado: ' . ($cart ? $cart->id : 'ninguno'));
-
-        // Si no existe carrito activo, crear uno nuevo
-        if (!$cart) {
-            Log::info('➕ Creando nuevo carrito para usuario ' . $user->id);
-            
-            $cart = Cart::create([
+        // ✅ Buscar o crear carrito ACTIVO (temporal) del usuario
+        // Un carrito temporal tiene: activo=1 y estado_pedido=NULL
+        $cart = Cart::firstOrCreate(
+            [
                 'id_usuario' => $user->id,
-                'activo' => 1
-            ]);
-            
-            Log::info('✅ Carrito creado con ID: ' . $cart->id);
-        }
+                'activo' => 1,
+            ],
+            [
+                'estado_pedido' => null
+            ]
+        );
+
+        Log::info('🛒 addToCart - Usuario: ' . $user->id . ', Producto: ' . $product->id . ', Cart ID: ' . $cart->id);
 
         // Verificar si el producto ya está en el carrito
         $cartProduct = $cart->products()->where('id_producto', $product->id)->first();
 
         if ($cartProduct) {
+            // Producto ya existe, aumentar cantidad
             $nuevaCantidad = $cartProduct->pivot->cantidad + $cantidad;
-            
+
             // Verificar stock para la nueva cantidad
             if ($nuevaCantidad > $product->cantidad) {
                 return response()->json([
@@ -240,22 +228,20 @@ class ProductController extends Controller
                 'cantidad' => $nuevaCantidad,
                 'precio_unitario' => $product->precio
             ]);
+
+            Log::info('📦 Producto actualizado en carrito - Nueva cantidad: ' . $nuevaCantidad);
         } else {
+            // Producto nuevo, agregarlo
             $cart->products()->attach($product->id, [
                 'cantidad' => $cantidad,
                 'precio_unitario' => $product->precio
             ]);
+
+            Log::info('✅ Producto agregado al carrito');
         }
 
         // Recargar carrito con todas las relaciones necesarias
         $cart->load(['products.images', 'products.category']);
-        
-        Log::info('Producto agregado al carrito', [
-            'cart_id' => $cart->id,
-            'producto_id' => $product->id,
-            'cantidad' => $cantidad,
-            'total_productos_en_carrito' => $cart->products->count()
-        ]);
 
         return response()->json([
             'mensaje' => 'Producto agregado al carrito',

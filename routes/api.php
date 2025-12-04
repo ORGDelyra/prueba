@@ -93,6 +93,12 @@ Route::middleware('auth:sanctum')->group(function () {
     // DOMICILIARIO: Ver mis entregas asignadas
     Route::get('/cart/mis-entregas', [CartController::class, 'misEntregas']);
 
+    // ✅ DOMICILIARIO: Ver pedidos disponibles para tomar
+    Route::get('/cart/pedidos-disponibles', [CartController::class, 'pedidosDisponibles']);
+
+    // ✅ DOMICILIARIO: Tomar un pedido disponible
+    Route::put('/cart/{cart}/tomar-pedido', [CartController::class, 'tomarPedido']);
+
     // Ver carrito del usuario actual
     Route::get('/cart/view', [ProductController::class, 'viewCart']);
 

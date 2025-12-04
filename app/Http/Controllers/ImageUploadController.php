@@ -23,7 +23,7 @@ class ImageUploadController extends Controller
         $file = $request->file('file');
 
         $cloudName = env('CLOUDINARY_CLOUD_NAME');
-        
+
         // Resolución del upload preset según el tipo
         $providedPreset = $request->input('upload_preset');
         $type = $request->input('type');
@@ -56,7 +56,7 @@ class ImageUploadController extends Controller
 
             // Usar cURL directamente para unsigned upload (más control, sin headers extra)
             $ch = curl_init();
-            
+
             $postData = [
                 'file' => new \CURLFile($file->getPathname(), $file->getMimeType(), $file->getClientOriginalName()),
                 'upload_preset' => $uploadPreset
@@ -75,6 +75,7 @@ class ImageUploadController extends Controller
             $response = curl_exec($ch);
             $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
             $error = curl_error($ch);
+            /** @phpstan-ignore-next-line */
             curl_close($ch);
 
             if ($error) {
